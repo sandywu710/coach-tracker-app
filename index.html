@@ -1,0 +1,1164 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>💪 學員管理 App</title>
+
+  <!-- ╔══════════════════════════════════════════════════════════╗ -->
+  <!-- ║  ✅  第一步：填入你的 Supabase 設定（只改這兩行）         ║ -->
+  <!-- ║  位置：Supabase → Project Settings → API                ║ -->
+  <!-- ╚══════════════════════════════════════════════════════════╝ -->
+  <script>
+    const SUPABASE_URL      = "https://bdpegybvbkhlczodhzyv.supabase.co";  // ← 改這裡
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJkcGVneWJ2YmtobGN6b2Roenl2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY3MDAyOTIsImV4cCI6MjA5MjI3NjI5Mn0.3cewLlUJqLmlMvEGvBqGB1AONkiFPLorgRUqg4kD2G0";          // ← 改這裡
+
+    // 🔐 密碼鎖（留空 "" 代表不啟用，填入字串如 "abc123" 即啟用）
+    const APP_PASSWORD = "0905";  // ← 想設密碼就填這裡
+  </script>
+  <!-- ══════════════════════════════════════════════════════════ -->
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+    *, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body { background: #EFECE6; font-family: 'Noto Sans TC', system-ui, sans-serif; margin: 0; }
+
+    @keyframes fadeUp  { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes fadeIn  { from { opacity:0; } to { opacity:1; } }
+    @keyframes toastIn { from { opacity:0; transform:translateX(-50%) translateY(-10px); }
+                         to   { opacity:1; transform:translateX(-50%) translateY(0); } }
+    .anim-up    { animation: fadeUp  .22s ease both; }
+    .anim-in    { animation: fadeIn  .15s ease both; }
+    .anim-toast { animation: toastIn .2s  ease both; }
+
+    .press { transition: transform .12s; }
+    .press:active { transform: scale(0.965); }
+    .tab { transition: background .14s, color .14s; }
+    .tab.on { background: #1a1a1a; color: #fff; }
+
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
+    input[type=number] { -moz-appearance: textfield; }
+
+    /* 共用欄位樣式（不用 Tailwind，避免 CDN 產生差異）*/
+    .f {
+      width: 100%;
+      background: #F8F7F4;
+      border: 1.5px solid #E2DFD8;
+      border-radius: 12px;
+      padding: 11px 14px;
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color .15s, background .15s;
+    }
+    .f:focus { border-color: #1a1a1a; background: #fff; }
+
+    .modal-scroll {
+      max-height: 82vh;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+    }
+  </style>
+
+  <script>
+    tailwind.config = { theme: { extend: { colors: {
+      brand:'#1a1a1a', danger:'#DC2626', ok:'#16A34A', warn:'#D97706'
+    }}}}
+  </script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+/* ══ Supabase ════════════════════════════════════════════ */
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/* ══ 工具 ════════════════════════════════════════════════ */
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const fmtDate  = (s) => s ? s.slice(0, 10).replace(/-/g, '/') : '—';
+const fmtDT    = (iso) => {
+  if (!iso) return '尚未簽到';
+  return new Date(iso).toLocaleString('zh-TW',
+    { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+};
+const money = (n) => 'NT$ ' + Number(n || 0).toLocaleString();
+const cx    = (...a) => a.filter(Boolean).join(' ');
+const Lbl   = ({ children }) => (
+  <label style={{ display:'block', fontSize:12, fontWeight:700, color:'#6b7280', marginBottom:6 }}>
+    {children}
+  </label>
+);
+
+/* ══ Toast ═══════════════════════════════════════════════ */
+function Toast({ msg, type, onDone }) {
+  useEffect(() => { const t = setTimeout(onDone, 2800); return () => clearTimeout(t); }, []);
+  const bg = type==='error' ? '#DC2626' : type==='warn' ? '#D97706' : '#16A34A';
+  return (
+    <div className="anim-toast" style={{
+      position:'fixed', top:20, left:'50%', zIndex:999,
+      background:bg, color:'#fff', fontSize:13, fontWeight:700,
+      padding:'10px 22px', borderRadius:99, boxShadow:'0 4px 20px rgba(0,0,0,.18)',
+      whiteSpace:'nowrap', pointerEvents:'none',
+    }}>{msg}</div>
+  );
+}
+
+/* ══ Confirm 對話框 ═══════════════════════════════════════ */
+function Confirm({ msg, onOk, onCancel, okLabel='確定刪除', okBg='#DC2626' }) {
+  return (
+    <div className="anim-in" style={{
+      position:'fixed', inset:0, zIndex:80,
+      background:'rgba(0,0,0,.5)',
+      display:'flex', alignItems:'flex-end', justifyContent:'center',
+      padding:'0 16px 32px',
+    }}>
+      <div className="anim-up" style={{
+        background:'#fff', borderRadius:20, padding:24,
+        width:'100%', maxWidth:400, boxShadow:'0 8px 40px rgba(0,0,0,.18)',
+      }}>
+        <p style={{ fontSize:14, color:'#374151', lineHeight:1.6, marginBottom:20 }}>{msg}</p>
+        <div style={{ display:'flex', gap:10 }}>
+          <button className="press" onClick={onCancel} style={{
+            flex:1, padding:'12px 0', borderRadius:12, border:'1.5px solid #E2DFD8',
+            fontSize:14, color:'#6b7280', background:'#fff', cursor:'pointer',
+          }}>取消</button>
+          <button className="press" onClick={onOk} style={{
+            flex:1, padding:'12px 0', borderRadius:12, border:'none',
+            fontSize:14, fontWeight:700, color:'#fff', background:okBg, cursor:'pointer',
+          }}>{okLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══ Modal 外殼（支援下滑關閉）══════════════════════════
+   手勢邏輯：記錄 touchstart Y，touchmove 時即時平移面板，
+   touchend 時若下滑 > 80px 則關閉，否則彈回原位。
+══════════════════════════════════════════════════════════ */
+function Modal({ title, onClose, children }) {
+  const panelRef   = useRef(null);
+  const startY     = useRef(0);
+  const currentDY  = useRef(0);
+  const dragging   = useRef(false);
+
+  const onTouchStart = (e) => {
+    /* 只有在最頂端（scrollTop === 0）才啟動下滑手勢，
+       避免跟內容滾動衝突 */
+    const scroller = panelRef.current?.querySelector('.modal-scroll');
+    if (scroller && scroller.scrollTop > 2) return;
+    startY.current  = e.touches[0].clientY;
+    currentDY.current = 0;
+    dragging.current  = true;
+  };
+
+  const onTouchMove = (e) => {
+    if (!dragging.current) return;
+    const dy = e.touches[0].clientY - startY.current;
+    if (dy < 0) { dragging.current = false; return; } // 上滑不處理
+    currentDY.current = dy;
+    /* 即時平移面板（阻力效果：超過 150px 後變慢）*/
+    const translated = dy < 150 ? dy : 150 + (dy - 150) * 0.25;
+    if (panelRef.current) {
+      panelRef.current.style.transform  = `translateY(${translated}px)`;
+      panelRef.current.style.transition = 'none';
+    }
+  };
+
+  const onTouchEnd = () => {
+    if (!dragging.current) return;
+    dragging.current = false;
+    if (currentDY.current > 80) {
+      /* 下滑夠多 → 滑出畫面再關閉 */
+      if (panelRef.current) {
+        panelRef.current.style.transition = 'transform .22s ease';
+        panelRef.current.style.transform  = 'translateY(110%)';
+      }
+      setTimeout(onClose, 200);
+    } else {
+      /* 不夠 → 彈回 */
+      if (panelRef.current) {
+        panelRef.current.style.transition = 'transform .2s spring(1 80 10 0)';
+        panelRef.current.style.transform  = 'translateY(0)';
+      }
+    }
+  };
+
+  return (
+    <div
+      className="anim-in"
+      style={{
+        position:'fixed', inset:0, zIndex:70,
+        background:'rgba(0,0,0,.5)',
+        display:'flex', alignItems:'flex-end', justifyContent:'center',
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} /* 點遮罩也能關 */
+    >
+      <div
+        ref={panelRef}
+        className="anim-up"
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        style={{
+          background:'#fff', borderRadius:'24px 24px 0 0',
+          width:'100%', maxWidth:520, boxShadow:'0 -4px 40px rgba(0,0,0,.15)',
+          willChange:'transform', touchAction:'pan-y',
+        }}
+      >
+        {/* 拖把手（視覺提示） */}
+        <div style={{ display:'flex', justifyContent:'center', padding:'12px 0 4px', cursor:'grab' }}>
+          <div style={{ width:44, height:5, borderRadius:3, background:'#D1CDC6' }}></div>
+        </div>
+        {/* 標題列 */}
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'8px 20px 8px' }}>
+          <h2 style={{ fontSize:15, fontWeight:900, color:'#111', margin:0 }}>{title}</h2>
+          <button className="press" onClick={onClose} style={{
+            width:32, height:32, borderRadius:16, background:'#F0EDE7',
+            border:'none', cursor:'pointer', fontSize:14, color:'#6b7280',
+          }}>✕</button>
+        </div>
+        {/* 內容 */}
+        <div className="modal-scroll" style={{ padding:'4px 20px 36px' }}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ══ 密碼鎖頁面 ════════════════════════════════════════════
+   安全模型：密碼是唯一真正的認證關卡，FaceID 只是快捷方式
+   ┌─────────────────────────────────────────────────────┐
+   │  情況 A：已綁定 FaceID → 直接顯示 FaceID 按鈕      │
+   │  情況 B：未綁定        → 只顯示密碼輸入框           │
+   │  密碼正確後           → 詢問是否要綁定 FaceID       │
+   │  陌生人拿到網址       → 沒有密碼 → 進不去           │
+   │                         無法自行綁定 FaceID          │
+   └─────────────────────────────────────────────────────┘
+══════════════════════════════════════════════════════════ */
+function LockScreen({ onUnlock }) {
+  const pwRef = useRef(null);
+
+  // 'idle' | 'ask-bind' | 'binding' | 'bio-unlock'
+  const [phase,      setPhase]      = useState('idle');
+  const [err,        setErr]        = useState('');
+  const [bioSupport, setBioSupport] = useState('checking'); // 'checking'|'yes'|'no'|'needs-https'
+  const [bioLoading, setBioLoading] = useState(false);
+
+  const hasBound = !!localStorage.getItem('_fcoach_bio_id');
+
+  /* 偵測 WebAuthn 支援 */
+  useEffect(() => {
+    (async () => {
+      const secure = location.protocol === 'https:' ||
+                     location.hostname  === 'localhost' ||
+                     location.hostname  === '127.0.0.1';
+      if (!secure)                        { setBioSupport('needs-https'); return; }
+      if (!window.PublicKeyCredential)    { setBioSupport('no');          return; }
+      try {
+        const ok = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+        setBioSupport(ok ? 'yes' : 'no');
+      } catch { setBioSupport('no'); }
+    })();
+  }, []);
+
+  /* 初始畫面：若已綁定且環境支援，直接進入 bio 解鎖 phase */
+  useEffect(() => {
+    if (bioSupport === 'yes' && hasBound) setPhase('bio-unlock');
+  }, [bioSupport]);
+
+  /* ── 密碼驗證 ── */
+  const attemptPassword = (e) => {
+    e.preventDefault();
+    const val = pwRef.current?.value ?? '';
+    if (!APP_PASSWORD || val === APP_PASSWORD) {
+      /* 密碼正確：若支援生物辨識且尚未綁定 → 詢問是否綁定 */
+      if (bioSupport === 'yes' && !hasBound) {
+        setPhase('ask-bind');
+      } else {
+        onUnlock();
+      }
+    } else {
+      setErr('密碼錯誤，請再試一次');
+      pwRef.current.value = '';
+      pwRef.current.focus();
+      setTimeout(() => setErr(''), 2500);
+    }
+  };
+
+  /* ── WebAuthn 核心：create（綁定）or get（驗證）── */
+  const runWebAuthn = async (mode) => {
+    setBioLoading(true);
+    setErr('');
+    try {
+      if (mode === 'create') {
+        const cred = await navigator.credentials.create({
+          publicKey: {
+            challenge: crypto.getRandomValues(new Uint8Array(32)),
+            rp:        { name: '學員管理App', id: location.hostname },
+            user:      { id: crypto.getRandomValues(new Uint8Array(16)), name: 'coach', displayName: '教練' },
+            pubKeyCredParams: [{ alg:-7, type:'public-key' }, { alg:-257, type:'public-key' }],
+            authenticatorSelection: { authenticatorAttachment:'platform', userVerification:'required', residentKey:'preferred' },
+            timeout: 60000,
+          },
+        });
+        const bytes = new Uint8Array(cred.rawId);
+        localStorage.setItem('_fcoach_bio_id', btoa(String.fromCharCode(...bytes)));
+        onUnlock();
+
+      } else {
+        const stored = localStorage.getItem('_fcoach_bio_id');
+        const rawId  = Uint8Array.from(atob(stored), c => c.charCodeAt(0));
+        await navigator.credentials.get({
+          publicKey: {
+            challenge:        crypto.getRandomValues(new Uint8Array(32)),
+            rpId:             location.hostname,
+            allowCredentials: [{ id: rawId, type:'public-key', transports:['internal'] }],
+            userVerification: 'required',
+            timeout:           60000,
+          },
+        });
+        onUnlock();
+      }
+    } catch (e) {
+      if (e.name === 'NotAllowedError') {
+        /* 使用者取消，退回密碼畫面 */
+        setPhase('idle');
+      } else if (e.name === 'InvalidStateError') {
+        localStorage.removeItem('_fcoach_bio_id');
+        setErr('綁定已過期，請重新輸入密碼');
+        setPhase('idle');
+      } else {
+        setErr(`辨識失敗（${e.name}），請輸入密碼`);
+        setPhase('idle');
+      }
+    }
+    setBioLoading(false);
+  };
+
+  /* 清除綁定（回到只剩密碼） */
+  const unbind = () => {
+    localStorage.removeItem('_fcoach_bio_id');
+    setPhase('idle');
+    setErr('已解除綁定，請輸入密碼重新登入');
+    setTimeout(() => setErr(''), 3000);
+  };
+
+  /* ── 共用樣式 ── */
+  const btnPrimary = {
+    background:'#1a1a1a', color:'#fff', fontWeight:700, fontSize:15,
+    padding:'16px 0', borderRadius:16, border:'none', cursor:'pointer',
+    width:'100%', display:'flex', alignItems:'center', justifyContent:'center', gap:8,
+  };
+  const btnSecondary = {
+    background:'#F8F7F4', color:'#374151', fontWeight:600, fontSize:14,
+    padding:'13px 0', borderRadius:14, border:'1.5px solid #E2DFD8', cursor:'pointer', width:'100%',
+  };
+
+  return (
+    <div style={{
+      minHeight:'100vh', display:'flex', flexDirection:'column',
+      alignItems:'center', justifyContent:'center',
+      background:'#EFECE6', padding:'0 32px',
+    }}>
+      <div style={{ fontSize:48, marginBottom:12 }}>💪</div>
+      <h1 style={{ fontSize:22, fontWeight:900, color:'#111', margin:'0 0 4px' }}>學員管理 App</h1>
+
+      <div style={{ width:'100%', maxWidth:300, marginTop:32, display:'flex', flexDirection:'column', gap:12 }}>
+
+        {/* ══ Phase：bio-unlock — 直接用 FaceID 解鎖 ══ */}
+        {phase === 'bio-unlock' && (
+          <>
+            <p style={{ textAlign:'center', fontSize:13, color:'#9ca3af', margin:'0 0 4px' }}>
+              使用已綁定的生物辨識解鎖
+            </p>
+            <button
+              className="press"
+              onClick={() => runWebAuthn('get')}
+              disabled={bioLoading}
+              style={{ ...btnPrimary, opacity: bioLoading ? 0.6 : 1 }}>
+              <span style={{ fontSize:22 }}>{bioLoading ? '⏳' : '🔐'}</span>
+              {bioLoading ? '驗證中…' : 'FaceID ／ 指紋解鎖'}
+            </button>
+
+            {/* 分隔 */}
+            <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+              <div style={{ flex:1, height:1, background:'#E2DFD8' }}></div>
+              <span style={{ fontSize:11, color:'#C4C0BA' }}>或</span>
+              <div style={{ flex:1, height:1, background:'#E2DFD8' }}></div>
+            </div>
+
+            {/* 改用密碼 */}
+            <button className="press" onClick={() => { setPhase('idle'); setErr(''); }}
+              style={btnSecondary}>
+              改用密碼登入
+            </button>
+
+            {err && <p style={{ fontSize:12, color:'#DC2626', textAlign:'center', margin:0 }}>{err}</p>}
+
+            {/* 解除綁定（小字） */}
+            <button onClick={unbind} style={{
+              background:'none', border:'none', cursor:'pointer',
+              fontSize:11, color:'#C4C0BA', textDecoration:'underline',
+            }}>解除 FaceID 綁定</button>
+          </>
+        )}
+
+        {/* ══ Phase：idle — 密碼輸入 ══ */}
+        {phase === 'idle' && (
+          <>
+            <p style={{ textAlign:'center', fontSize:13, color:'#9ca3af', margin:'0 0 4px' }}>
+              {APP_PASSWORD ? '請輸入密碼' : '點擊進入'}
+            </p>
+            {bioSupport === 'needs-https' && (
+              <div style={{
+                background:'#FFFBEB', border:'1.5px solid #FDE68A',
+                borderRadius:12, padding:'10px 13px', fontSize:11, color:'#92400E', lineHeight:1.6,
+              }}>
+                ⚠️ 生物辨識需要 <strong>HTTPS</strong>（部署到 Vercel 後可使用）
+              </div>
+            )}
+            <form onSubmit={attemptPassword} style={{ display:'flex', flexDirection:'column', gap:10 }}>
+              {APP_PASSWORD && (
+                <input
+                  ref={pwRef}
+                  type="password"
+                  placeholder="輸入密碼"
+                  autoFocus
+                  className="f"
+                  style={{ textAlign:'center', fontSize:20, letterSpacing:6,
+                    borderColor: err ? '#DC2626' : undefined }}
+                />
+              )}
+              <button type="submit" className="press" style={btnPrimary}>
+                {APP_PASSWORD ? '密碼進入' : '進入 App'}
+              </button>
+            </form>
+            {err && <p style={{ fontSize:12, color:'#DC2626', textAlign:'center', margin:0 }}>{err}</p>}
+          </>
+        )}
+
+        {/* ══ Phase：ask-bind — 密碼正確後詢問是否綁定 FaceID ══ */}
+        {phase === 'ask-bind' && (
+          <>
+            <div style={{
+              background:'#fff', border:'1.5px solid #EDE9E3',
+              borderRadius:16, padding:'16px', textAlign:'center',
+            }}>
+              <div style={{ fontSize:32, marginBottom:8 }}>🔐</div>
+              <p style={{ fontSize:14, fontWeight:700, color:'#111', margin:'0 0 6px' }}>
+                要設定 FaceID／指紋解鎖嗎？
+              </p>
+              <p style={{ fontSize:12, color:'#9ca3af', margin:0, lineHeight:1.6 }}>
+                下次開啟 App 時可直接用臉部或指紋解鎖，<br />不需要再輸入密碼。
+              </p>
+            </div>
+
+            <button
+              className="press"
+              onClick={() => { setPhase('binding'); runWebAuthn('create'); }}
+              disabled={bioLoading}
+              style={{ ...btnPrimary, opacity: bioLoading ? 0.6 : 1 }}>
+              <span style={{ fontSize:20 }}>{bioLoading ? '⏳' : '✅'}</span>
+              {bioLoading ? '設定中…' : '好，設定生物辨識'}
+            </button>
+
+            <button className="press" onClick={onUnlock} style={btnSecondary}>
+              不用，直接進入
+            </button>
+          </>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════
+   主 App
+══════════════════════════════════════════════════════════ */
+function App() {
+  // 一律顯示鎖定畫面，讓使用者選擇密碼或生物辨識
+  // （即使未設密碼，也讓生物辨識可用；若兩者都不需要，LockScreen 會顯示「直接進入」按鈕）
+  const [unlocked, setUnlocked] = useState(false);
+  const [tab,      setTab]      = useState('home');
+  const [students, setStudents] = useState([]);
+  const [checkins, setCheckins] = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [toast,    setToast]    = useState(null);   // { msg, type }
+  const [confirm,  setConfirm]  = useState(null);   // Confirm props
+
+  // Modal 狀態
+  const [purchaseFor, setPurchaseFor] = useState(null); // 加購 → student
+  const [editFor,     setEditFor]     = useState(null); // 編輯 → student
+  const [undoFor,     setUndoFor]     = useState(null); // 撤銷 → student
+
+  const [checkingId, setCheckingId] = useState(null);
+
+  /* 載入資料 */
+  const fetchAll = useCallback(async () => {
+    const [{ data: s }, { data: c }] = await Promise.all([
+      sb.from('students').select('*').order('created_at', { ascending: false }),
+      sb.from('checkins').select('*').order('checked_at', { ascending: false }),
+    ]);
+    setStudents(s || []);
+    setCheckins(c || []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { if (unlocked) fetchAll(); }, [unlocked]);
+
+  const toast$ = (msg, type = 'success') => setToast({ msg, type });
+
+  /* ── 簽到 ─────────────────────────────────────────── */
+  const doCheckIn = async (student) => {
+    if (student.remaining_sessions <= 0) {
+      toast$(`${student.name} 剩餘堂數為 0，無法簽到`, 'error');
+      return;
+    }
+    setCheckingId(student.id);
+    const newR = student.remaining_sessions - 1;
+    const [{ error: e1 }, { error: e2 }] = await Promise.all([
+      sb.from('students').update({ remaining_sessions: newR }).eq('id', student.id),
+      sb.from('checkins').insert({ student_id: student.id }),
+    ]);
+    if (!e1 && !e2) {
+      toast$(`✓ ${student.name} 簽到！剩 ${newR} 堂`);
+      fetchAll();
+    } else {
+      toast$('簽到失敗，請重試', 'error');
+    }
+    setCheckingId(null);
+  };
+
+  /* ── 撤銷最近一次簽到 ───────────────────────────────── */
+  const doUndoCheckin = async (student) => {
+    const last = checkins.find(c => c.student_id === student.id);
+    if (!last) { toast$('找不到簽到紀錄', 'error'); setUndoFor(null); return; }
+    const newR = student.remaining_sessions + 1;
+    const [{ error: e1 }, { error: e2 }] = await Promise.all([
+      sb.from('students').update({ remaining_sessions: newR }).eq('id', student.id),
+      sb.from('checkins').delete().eq('id', last.id),
+    ]);
+    if (!e1 && !e2) {
+      toast$(`↩ 已撤銷 ${student.name} 最近一次簽到`);
+      fetchAll();
+    } else {
+      toast$('撤銷失敗', 'error');
+    }
+    setUndoFor(null);
+  };
+
+  /* ── 新增學員 ─────────────────────────────────────── */
+  const doAddStudent = async (payload) => {
+    const { error } = await sb.from('students').insert(payload);
+    if (!error) {
+      toast$(`✓ 已新增：${payload.name}`);
+      setTab('home');
+      fetchAll();
+      return true;
+    }
+    toast$('新增失敗：' + (error.message || '請確認 Supabase 設定'), 'error');
+    return false;
+  };
+
+  /* ── 編輯學員 ─────────────────────────────────────── */
+  const doEditStudent = async (id, payload) => {
+    const { error } = await sb.from('students').update(payload).eq('id', id);
+    if (!error) {
+      toast$('✓ 已更新學員資料');
+      setEditFor(null);
+      fetchAll();
+      return true;
+    }
+    toast$('更新失敗', 'error');
+    return false;
+  };
+
+  /* ── 加購課程 ─────────────────────────────────────── */
+  const doAddPurchase = async (student, extra) => {
+    const { error } = await sb.from('students').update({
+      remaining_sessions: student.remaining_sessions + extra.sessions,
+      total_sessions:     (student.total_sessions || 0) + extra.sessions,
+      total_paid:         (student.total_paid     || 0) + extra.amount,
+      last_purchase_date: extra.date,
+    }).eq('id', student.id);
+    if (!error) {
+      toast$(`✓ ${student.name} 加購 ${extra.sessions} 堂`);
+      setPurchaseFor(null);
+      fetchAll();
+      return true;
+    }
+    toast$('加購失敗', 'error');
+    return false;
+  };
+
+  /* ── 刪除學員 ─────────────────────────────────────── */
+  const doDelete = async (student) => {
+    setConfirm(null);
+    const { error } = await sb.from('students').delete().eq('id', student.id);
+    if (!error) {
+      toast$(`已刪除：${student.name}`);
+      setEditFor(null);
+      fetchAll();
+    } else {
+      toast$('刪除失敗', 'error');
+    }
+  };
+
+  /* 統計 */
+  const lastCheckin  = {};
+  checkins.forEach(c => { if (!lastCheckin[c.student_id]) lastCheckin[c.student_id] = c.checked_at; });
+  const checkinCount = {};
+  checkins.forEach(c => { checkinCount[c.student_id] = (checkinCount[c.student_id] || 0) + 1; });
+  const totalRevenue   = students.reduce((s, x) => s + (x.total_paid || 0), 0);
+  const totalRemaining = students.reduce((s, x) => s + (x.remaining_sessions || 0), 0);
+  const lowList        = students.filter(s => s.remaining_sessions < 3);
+
+  /* ── 密碼鎖 ── */
+  if (!unlocked) return <LockScreen onUnlock={() => setUnlocked(true)} />;
+
+  return (
+    <div style={{ minHeight:'100vh', paddingBottom:48 }}>
+
+      {/* Toast */}
+      {toast && <Toast msg={toast.msg} type={toast.type} onDone={() => setToast(null)} />}
+
+      {/* Confirm */}
+      {confirm && <Confirm {...confirm} />}
+
+      {/* Modal：加購 */}
+      {purchaseFor && (
+        <AddPurchaseModal
+          student={purchaseFor}
+          onSave={(extra) => doAddPurchase(purchaseFor, extra)}
+          onClose={() => setPurchaseFor(null)}
+        />
+      )}
+
+      {/* Modal：編輯 */}
+      {editFor && (
+        <EditStudentModal
+          student={editFor}
+          onSave={(payload) => doEditStudent(editFor.id, payload)}
+          onClose={() => setEditFor(null)}
+          onDelete={() => setConfirm({
+            msg: `確定刪除學員「${editFor.name}」？此操作無法復原。`,
+            okLabel: '確定刪除', okBg: '#DC2626',
+            onOk:    () => doDelete(editFor),
+            onCancel:() => setConfirm(null),
+          })}
+        />
+      )}
+
+      {/* Confirm：撤銷簽到 */}
+      {undoFor && (
+        <Confirm
+          msg={`撤銷「${undoFor.name}」最近一次簽到記錄？剩餘堂數將加回 1 堂。`}
+          okLabel="撤銷簽到" okBg="#D97706"
+          onOk={() => doUndoCheckin(undoFor)}
+          onCancel={() => setUndoFor(null)}
+        />
+      )}
+
+      {/* ── Header ── */}
+      <div style={{
+        background:'#1a1a1a', color:'#fff', position:'sticky', top:0, zIndex:30,
+      }}>
+        <div style={{ maxWidth:520, margin:'0 auto', padding:'12px 16px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+          <span style={{ fontWeight:900, fontSize:14, letterSpacing:1 }}>💪 學員管理</span>
+          <nav style={{ display:'flex', gap:6 }}>
+            {[['home','首頁'],['add','新增'],['admin','後台']].map(([k, l]) => (
+              <button key={k} onClick={() => setTab(k)}
+                className={cx('tab press', tab === k ? 'on' : '')}
+                style={{
+                  fontSize:12, fontWeight:700, padding:'6px 14px', borderRadius:8,
+                  border:'none', cursor:'pointer',
+                  color: tab === k ? '#fff' : '#9ca3af',
+                  background: tab === k ? '#fff2' : 'transparent',
+                }}>
+                {l}
+              </button>
+            ))}
+          </nav>
+        </div>
+      </div>
+
+      {/* ── 主內容 ── */}
+      <div style={{ maxWidth:520, margin:'0 auto', padding:'20px 16px 0' }}>
+        {loading
+          ? <div style={{ textAlign:'center', color:'#9ca3af', marginTop:80, fontSize:14 }}>載入中…</div>
+          : tab === 'home'
+            ? <HomeView
+                students={students} lastCheckin={lastCheckin} checkingId={checkingId}
+                onCheckIn={doCheckIn}
+                onPurchase={setPurchaseFor}
+                onEdit={setEditFor}
+                onUndo={setUndoFor}
+              />
+            : tab === 'add'
+              ? <AddStudentView onAdd={doAddStudent} />
+              : <AdminView
+                  students={students} totalRevenue={totalRevenue}
+                  totalRemaining={totalRemaining} lowList={lowList}
+                  checkins={checkins} checkinCount={checkinCount}
+                  onEdit={setEditFor}
+                  onDelete={(s) => setConfirm({
+                    msg: `確定刪除學員「${s.name}」？`,
+                    okLabel:'確定刪除', okBg:'#DC2626',
+                    onOk:    () => doDelete(s),
+                    onCancel:() => setConfirm(null),
+                  })}
+                />
+        }
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════
+   首頁 — 學員列表
+══════════════════════════════════════════════════════════ */
+function HomeView({ students, lastCheckin, checkingId, onCheckIn, onPurchase, onEdit, onUndo }) {
+  const [q, setQ] = useState('');
+  const list = students.filter(s => s.name.toLowerCase().includes(q.toLowerCase()));
+
+  return (
+    <div className="anim-up" style={{ display:'flex', flexDirection:'column', gap:12 }}>
+
+      {/* 搜尋框：uncontrolled，onInput 更新 q，打字不 re-render 輸入框本身 */}
+      <input
+        type="text"
+        placeholder="🔍  搜尋學員…"
+        onInput={e => setQ(e.target.value)}
+        className="f"
+      />
+
+      {list.length === 0 && (
+        <div style={{ textAlign:'center', color:'#9ca3af', fontSize:14, marginTop:64 }}>
+          {students.length === 0 ? '尚無學員，請點右上角「新增」' : '找不到該學員'}
+        </div>
+      )}
+
+      {list.map(s => {
+        const isLow  = s.remaining_sessions < 3;
+        const isZero = s.remaining_sessions <= 0;
+        return (
+          <div key={s.id} style={{
+            background: isLow ? '#FFF5F5' : '#fff',
+            border: `1.5px solid ${isLow ? '#FECACA' : '#EDE9E3'}`,
+            borderRadius: 20,
+            padding: 16,
+          }}>
+            {/* 主列 */}
+            <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+              {/* 頭像 */}
+              <div style={{
+                width:46, height:46, borderRadius:23, flexShrink:0,
+                background: isLow ? '#DC2626' : '#1a1a1a', color:'#fff',
+                display:'flex', alignItems:'center', justifyContent:'center',
+                fontSize:18, fontWeight:900,
+              }}>{s.name[0]}</div>
+
+              {/* 資訊 */}
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
+                  <span style={{ fontWeight:700, fontSize:15, color:'#111' }}>{s.name}</span>
+                  {isZero  && <span style={{ fontSize:11, background:'#DC2626', color:'#fff', padding:'2px 8px', borderRadius:99, fontWeight:700 }}>已用完</span>}
+                  {!isZero && isLow && <span style={{ fontSize:11, background:'#EF4444', color:'#fff', padding:'2px 8px', borderRadius:99, fontWeight:700 }}>快用完</span>}
+                </div>
+                <p style={{ fontSize:12, color:'#9ca3af', margin:'3px 0 0' }}>
+                  剩 <strong style={{ fontSize:14, color: isLow ? '#DC2626' : '#111' }}>{s.remaining_sessions}</strong> 堂
+                  　·　{fmtDT(lastCheckin[s.id])}
+                </p>
+              </div>
+
+              {/* 簽到鈕 */}
+              <button
+                className="press"
+                onClick={() => onCheckIn(s)}
+                disabled={checkingId === s.id || isZero}
+                style={{
+                  flexShrink:0, padding:'10px 18px', borderRadius:12, border:'none',
+                  fontSize:14, fontWeight:700, cursor: isZero ? 'not-allowed' : 'pointer',
+                  background: isZero ? '#F0EDE7' : '#1a1a1a',
+                  color: isZero ? '#9ca3af' : '#fff',
+                }}>
+                {checkingId === s.id ? '…' : '簽到'}
+              </button>
+            </div>
+
+            {/* 操作列 */}
+            <div style={{ display:'flex', gap:8, marginTop:12, paddingTop:12, borderTop:'1px solid #F0EDE7' }}>
+              {[
+                { label:'＋ 加購', fn:() => onPurchase(s), bg:'#F0FDF4', color:'#16A34A', border:'#BBF7D0' },
+                { label:'✎ 編輯', fn:() => onEdit(s),    bg:'#EFF6FF', color:'#2563EB', border:'#BFDBFE' },
+                { label:'↩ 撤簽', fn:() => onUndo(s),    bg:'#FFFBEB', color:'#D97706', border:'#FDE68A' },
+              ].map(btn => (
+                <button key={btn.label} className="press" onClick={btn.fn} style={{
+                  flex:1, padding:'8px 0', borderRadius:10,
+                  border: `1.5px solid ${btn.border}`,
+                  background: btn.bg, color: btn.color,
+                  fontSize:12, fontWeight:700, cursor:'pointer',
+                }}>{btn.label}</button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════
+   新增學員頁 — 全 useRef，零 re-render
+══════════════════════════════════════════════════════════ */
+function AddStudentView({ onAdd }) {
+  const [saving, setSaving] = useState(false);
+  const r = {
+    name:               useRef(null),
+    total_sessions:     useRef(null),
+    remaining_sessions: useRef(null),
+    price_per_session:  useRef(null),
+    total_paid:         useRef(null),
+    purchase_date:      useRef(null),
+    notes:              useRef(null),
+  };
+
+  const clearForm = () => {
+    r.name.current.value               = '';
+    r.total_sessions.current.value     = '';
+    r.remaining_sessions.current.value = '';
+    r.price_per_session.current.value  = '';
+    r.total_paid.current.value         = '';
+    r.purchase_date.current.value      = todayStr();
+    r.notes.current.value              = '';
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const name = r.name.current.value.trim();
+    if (!name) { r.name.current.focus(); return; }
+    setSaving(true);
+    const ok = await onAdd({
+      name,
+      total_sessions:     parseInt(r.total_sessions.current.value)      || 0,
+      remaining_sessions: parseInt(r.remaining_sessions.current.value)  || 0,
+      price_per_session:  parseFloat(r.price_per_session.current.value) || 0,
+      total_paid:         parseFloat(r.total_paid.current.value)        || 0,
+      last_purchase_date: r.purchase_date.current.value || todayStr(),
+      notes:              r.notes.current.value.trim(),
+    });
+    if (ok) clearForm();
+    setSaving(false);
+  };
+
+  return (
+    <div className="anim-up" style={{
+      background:'#fff', borderRadius:20, padding:20,
+      border:'1.5px solid #EDE9E3',
+    }}>
+      <h2 style={{ fontSize:18, fontWeight:900, color:'#111', margin:'0 0 20px' }}>新增學員</h2>
+      <form onSubmit={handleSubmit} style={{ display:'flex', flexDirection:'column', gap:16 }}>
+
+        <div><Lbl>姓名 *</Lbl>
+          <input ref={r.name} type="text" placeholder="例：王小明" className="f" />
+        </div>
+
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+          <div><Lbl>購買總堂數</Lbl>
+            <input ref={r.total_sessions} type="number" placeholder="例：10" className="f" />
+          </div>
+          <div>
+            <Lbl>目前剩餘堂數 * <span style={{ fontWeight:400, color:'#9ca3af' }}>（舊生用）</span></Lbl>
+            <input ref={r.remaining_sessions} type="number" placeholder="例：8" className="f" />
+          </div>
+        </div>
+
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+          <div><Lbl>單堂價格（NT$）</Lbl>
+            <input ref={r.price_per_session} type="number" placeholder="例：1500" className="f" />
+          </div>
+          <div><Lbl>已付總金額（NT$）</Lbl>
+            <input ref={r.total_paid} type="number" placeholder="例：15000" className="f" />
+          </div>
+        </div>
+
+        <div><Lbl>購買日期</Lbl>
+          <input ref={r.purchase_date} type="date" defaultValue={todayStr()} className="f" />
+        </div>
+
+        <div><Lbl>備註</Lbl>
+          <textarea ref={r.notes} placeholder="例：週三固定課，有膝蓋舊傷" rows={3}
+            className="f" style={{ resize:'none' }} />
+        </div>
+
+        <button type="submit" disabled={saving} className="press" style={{
+          background:'#1a1a1a', color:'#fff', fontWeight:700, fontSize:14,
+          padding:'15px 0', borderRadius:14, border:'none', cursor:'pointer',
+          opacity: saving ? 0.5 : 1, marginTop:4,
+        }}>{saving ? '儲存中…' : '新增學員'}</button>
+      </form>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════
+   加購課程 Modal — useRef
+══════════════════════════════════════════════════════════ */
+function AddPurchaseModal({ student, onSave, onClose }) {
+  const [saving, setSaving] = useState(false);
+  const r = { sessions: useRef(null), amount: useRef(null), date: useRef(null) };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const sessions = parseInt(r.sessions.current.value) || 0;
+    if (sessions <= 0) { r.sessions.current.focus(); return; }
+    setSaving(true);
+    await onSave({
+      sessions,
+      amount: parseFloat(r.amount.current.value) || 0,
+      date:   r.date.current.value || todayStr(),
+    });
+    setSaving(false);
+  };
+
+  return (
+    <Modal title={`加購課程 — ${student.name}`} onClose={onClose}>
+      <div style={{
+        background:'#F8F7F4', borderRadius:12, padding:'10px 14px',
+        fontSize:13, color:'#6b7280', marginBottom:16,
+      }}>
+        目前剩餘：<strong style={{ color:'#111', fontSize:15 }}>{student.remaining_sessions} 堂</strong>
+        　已付：<strong style={{ color:'#111' }}>{money(student.total_paid)}</strong>
+      </div>
+      <form onSubmit={handleSubmit} style={{ display:'flex', flexDirection:'column', gap:14 }}>
+        <div><Lbl>新購堂數 *</Lbl>
+          <input ref={r.sessions} type="number" placeholder="例：10" className="f" />
+        </div>
+        <div><Lbl>付款金額（NT$）</Lbl>
+          <input ref={r.amount} type="number" placeholder="例：15000" className="f" />
+        </div>
+        <div><Lbl>購買日期</Lbl>
+          <input ref={r.date} type="date" defaultValue={todayStr()} className="f" />
+        </div>
+        <button type="submit" disabled={saving} className="press" style={{
+          background:'#16A34A', color:'#fff', fontWeight:700, fontSize:14,
+          padding:'14px 0', borderRadius:14, border:'none', cursor:'pointer',
+          opacity: saving ? 0.5 : 1,
+        }}>{saving ? '儲存中…' : '確認加購'}</button>
+      </form>
+    </Modal>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════
+   編輯學員 Modal — useRef + defaultValue 預填
+══════════════════════════════════════════════════════════ */
+function EditStudentModal({ student, onSave, onClose, onDelete }) {
+  const [saving, setSaving] = useState(false);
+  const r = {
+    name:               useRef(null),
+    total_sessions:     useRef(null),
+    remaining_sessions: useRef(null),
+    price_per_session:  useRef(null),
+    total_paid:         useRef(null),
+    last_purchase_date: useRef(null),
+    notes:              useRef(null),
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const name = r.name.current.value.trim();
+    if (!name) { r.name.current.focus(); return; }
+    setSaving(true);
+    await onSave({
+      name,
+      total_sessions:     parseInt(r.total_sessions.current.value)      || 0,
+      remaining_sessions: parseInt(r.remaining_sessions.current.value)  || 0,
+      price_per_session:  parseFloat(r.price_per_session.current.value) || 0,
+      total_paid:         parseFloat(r.total_paid.current.value)        || 0,
+      last_purchase_date: r.last_purchase_date.current.value || null,
+      notes:              r.notes.current.value.trim(),
+    });
+    setSaving(false);
+  };
+
+  return (
+    <Modal title={`編輯學員 — ${student.name}`} onClose={onClose}>
+      <form onSubmit={handleSubmit} style={{ display:'flex', flexDirection:'column', gap:14 }}>
+        <div><Lbl>姓名 *</Lbl>
+          <input ref={r.name} type="text" defaultValue={student.name} className="f" />
+        </div>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+          <div><Lbl>購買總堂數</Lbl>
+            <input ref={r.total_sessions} type="number" defaultValue={student.total_sessions || ''} className="f" />
+          </div>
+          <div><Lbl>目前剩餘堂數</Lbl>
+            <input ref={r.remaining_sessions} type="number" defaultValue={student.remaining_sessions || ''} className="f" />
+          </div>
+        </div>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+          <div><Lbl>單堂價格（NT$）</Lbl>
+            <input ref={r.price_per_session} type="number" defaultValue={student.price_per_session || ''} className="f" />
+          </div>
+          <div><Lbl>已付總金額（NT$）</Lbl>
+            <input ref={r.total_paid} type="number" defaultValue={student.total_paid || ''} className="f" />
+          </div>
+        </div>
+        <div><Lbl>最近購買日期</Lbl>
+          <input ref={r.last_purchase_date} type="date"
+            defaultValue={student.last_purchase_date || todayStr()} className="f" />
+        </div>
+        <div><Lbl>備註</Lbl>
+          <textarea ref={r.notes} defaultValue={student.notes || ''} rows={3}
+            className="f" style={{ resize:'none' }} />
+        </div>
+
+        <button type="submit" disabled={saving} className="press" style={{
+          background:'#1a1a1a', color:'#fff', fontWeight:700, fontSize:14,
+          padding:'14px 0', borderRadius:14, border:'none', cursor:'pointer',
+          opacity: saving ? 0.5 : 1,
+        }}>{saving ? '儲存中…' : '儲存變更'}</button>
+
+        <button type="button" onClick={onDelete} className="press" style={{
+          background:'#fff', color:'#DC2626', fontWeight:700, fontSize:13,
+          padding:'12px 0', borderRadius:14,
+          border:'1.5px solid #FECACA', cursor:'pointer',
+        }}>刪除此學員</button>
+      </form>
+    </Modal>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════
+   後台管理頁
+══════════════════════════════════════════════════════════ */
+function AdminView({ students, totalRevenue, totalRemaining, lowList, checkins, checkinCount, onEdit, onDelete }) {
+  const [expanded, setExpanded] = useState(null);
+
+  return (
+    <div className="anim-up" style={{ display:'flex', flexDirection:'column', gap:20 }}>
+
+      {/* 統計 */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10 }}>
+        {[
+          { label:'學員總數',   val: students.length + ' 人' },
+          { label:'購買總金額', val: money(totalRevenue) },
+          { label:'剩餘總堂',   val: totalRemaining + ' 堂' },
+        ].map(c => (
+          <div key={c.label} style={{
+            background:'#fff', borderRadius:16, padding:12,
+            border:'1.5px solid #EDE9E3', textAlign:'center',
+          }}>
+            <p style={{ fontSize:10, color:'#9ca3af', fontWeight:700, letterSpacing:1, margin:'0 0 4px' }}>{c.label}</p>
+            <p style={{ fontSize:13, fontWeight:900, color:'#111', lineHeight:1.2, margin:0, wordBreak:'break-all' }}>{c.val}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* 低堂數警示 */}
+      {lowList.length > 0 && (
+        <div style={{ background:'#FFF5F5', border:'1.5px solid #FECACA', borderRadius:16, padding:'14px 16px' }}>
+          <p style={{ fontSize:13, fontWeight:900, color:'#B91C1C', margin:'0 0 8px' }}>⚠️ 堂數不足 3 堂</p>
+          {lowList.map(s => (
+            <p key={s.id} style={{ fontSize:13, color:'#DC2626', margin:'3px 0' }}>
+              {s.name}：剩餘 <strong>{s.remaining_sessions}</strong> 堂
+            </p>
+          ))}
+        </div>
+      )}
+
+      {/* 學員詳細 */}
+      <div>
+        <p style={{ fontSize:11, fontWeight:900, color:'#9ca3af', letterSpacing:1, marginBottom:12 }}>
+          所有學員（{students.length}）
+        </p>
+        <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+          {students.map(s => {
+            const isLow  = s.remaining_sessions < 3;
+            const open   = expanded === s.id;
+            const recent = checkins.filter(c => c.student_id === s.id).slice(0, 5);
+            return (
+              <div key={s.id} style={{
+                background: isLow ? '#FFF5F5' : '#fff',
+                border: `1.5px solid ${isLow ? '#FECACA' : '#EDE9E3'}`,
+                borderRadius:16, overflow:'hidden',
+              }}>
+                <button style={{
+                  width:'100%', display:'flex', alignItems:'center', gap:12,
+                  padding:'14px 16px', background:'transparent', border:'none', cursor:'pointer', textAlign:'left',
+                }} onClick={() => setExpanded(e => e === s.id ? null : s.id)}>
+                  <div style={{
+                    width:36, height:36, borderRadius:18, flexShrink:0,
+                    background: isLow ? '#DC2626' : '#1a1a1a', color:'#fff',
+                    display:'flex', alignItems:'center', justifyContent:'center',
+                    fontSize:14, fontWeight:900,
+                  }}>{s.name[0]}</div>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <p style={{ fontWeight:700, fontSize:14, color:'#111', margin:0 }}>{s.name}</p>
+                    <p style={{ fontSize:12, color: isLow ? '#EF4444' : '#9ca3af', margin:'2px 0 0' }}>
+                      剩 {s.remaining_sessions} 堂 · 簽到 {checkinCount[s.id] || 0} 次
+                    </p>
+                  </div>
+                  <span style={{ color:'#D1D5DB', fontSize:11 }}>{open ? '▲' : '▼'}</span>
+                </button>
+
+                {open && (
+                  <div style={{ borderTop:'1px solid #F0EDE7', padding:'12px 16px 16px' }}>
+                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px 0', fontSize:12, color:'#6b7280', marginBottom:12 }}>
+                      <span>購買總堂：<strong style={{ color:'#111' }}>{s.total_sessions}</strong></span>
+                      <span>剩餘：<strong style={{ color: isLow ? '#DC2626' : '#111' }}>{s.remaining_sessions}</strong></span>
+                      <span>單堂：<strong style={{ color:'#111' }}>{money(s.price_per_session)}</strong></span>
+                      <span>已付：<strong style={{ color:'#111' }}>{money(s.total_paid)}</strong></span>
+                      <span style={{ gridColumn:'1/-1' }}>購買日：<strong style={{ color:'#111' }}>{fmtDate(s.last_purchase_date)}</strong></span>
+                      {s.notes && <span style={{ gridColumn:'1/-1', color:'#9ca3af' }}>備註：{s.notes}</span>}
+                    </div>
+
+                    {recent.length > 0 && (
+                      <div style={{ marginBottom:12 }}>
+                        <p style={{ fontSize:11, color:'#9ca3af', fontWeight:700, margin:'0 0 6px' }}>最近簽到</p>
+                        {recent.map(c => (
+                          <p key={c.id} style={{ fontSize:12, color:'#6b7280', margin:'3px 0', display:'flex', alignItems:'center', gap:6 }}>
+                            <span style={{ width:6, height:6, borderRadius:3, background:'#16A34A', flexShrink:0, display:'inline-block' }}></span>
+                            {fmtDT(c.checked_at)}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+
+                    <div style={{ display:'flex', gap:8 }}>
+                      <button className="press" onClick={() => onEdit(s)} style={{
+                        flex:1, padding:'8px 0', borderRadius:10, fontSize:12, fontWeight:700,
+                        border:'1.5px solid #BFDBFE', background:'#EFF6FF', color:'#2563EB', cursor:'pointer',
+                      }}>✎ 編輯</button>
+                      <button className="press" onClick={() => onDelete(s)} style={{
+                        flex:1, padding:'8px 0', borderRadius:10, fontSize:12, fontWeight:700,
+                        border:'1.5px solid #FECACA', background:'#FFF5F5', color:'#DC2626', cursor:'pointer',
+                      }}>✕ 刪除</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══ 掛載 ════════════════════════════════════════════════ */
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
